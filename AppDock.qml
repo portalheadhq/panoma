@@ -1,7 +1,7 @@
 import QtQuick
 import qs.Commons
 
-// The running apps, shown only while Exposé is open. Icons come from the
+// The running apps, shown only while Panoma is open. Icons come from the
 // installed icon theme; apps with nothing on this workspace sit back a little.
 // Clicking one goes to that app; right-clicking shows all of its windows,
 // wherever they are.

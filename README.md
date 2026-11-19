@@ -1,4 +1,4 @@
-# Exposé
+# Panoma
 
 The desktop zooms out: every window on the workspace shrinks out of its real
 place into a grid over the wallpaper, and a dock of running apps rises from
@@ -16,7 +16,7 @@ focused.
 - **Workspaces** run along the top, each a small map of its windows. Click
   one to go there; **drag a window onto one** (or press `Shift+1–9`) to send
   it there without leaving; drop it on `+` for a fresh workspace.
-- **Three fingers sideways** inside Exposé slides to the next or previous
+- **Three fingers sideways** inside Panoma slides to the next or previous
   workspace, following the fingers (Ctrl+←/→ or PageUp/PageDown from the
   keyboard). Wherever you end up is where closing leaves you.
 
@@ -35,18 +35,18 @@ echo 'ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_T
 sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input --action=change
 ```
 
-The shell picks it up within 15 seconds (`omarchy-shell edu.expose status | jq .swipeReader`
+The shell picks it up within 15 seconds (`omarchy-shell panoma status | jq .swipeReader`
 turns `true`). Without it, the Hyprland swipe binds in `input.lua` still open
-and close Exposé, just without tracking the fingers.
+and close Panoma, just without tracking the fingers.
 
 To undo: `sudo rm /etc/udev/rules.d/70-touchpad-uaccess.rules` and trigger udev again.
 
 ## Trying the motion from a terminal
 
 ```bash
-omarchy-shell edu.expose scrub 0.4   # drag to 40%
-omarchy-shell edu.expose release     # let go: settles open or closed
-omarchy-shell edu.expose status | jq
+omarchy-shell panoma scrub 0.4   # drag to 40%
+omarchy-shell panoma release     # let go: settles open or closed
+omarchy-shell panoma status | jq
 ```
 
 `node test.js` checks the layout, filter, morph and swipe parsing.

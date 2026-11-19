@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Streams the touchpad's swipe gestures for Exposé, one libinput event per
+# Streams the touchpad's swipe gestures for Panoma, one libinput event per
 # line. Exits (and the shell retries later) when there is no touchpad it can
 # read, or no `libinput` tool: see README for the one-time permission setup.
 set -u

@@ -1,4 +1,4 @@
-// Pure logic for Exposé: turning `hyprctl -j clients` into the windows the
+// Pure logic for Panoma: turning `hyprctl -j clients` into the windows the
 // overlay shows, laying them out, filtering, grouping by app and moving the
 // selection. No QML in here, so `node test.js` can check all of it.
 
@@ -24,7 +24,7 @@ function workspaceOrder(id) {
   return id < 0 ? 100000 - id : id
 }
 
-// The windows Exposé knows about, newest focus first within a workspace and
+// The windows Panoma knows about, newest focus first within a workspace and
 // in on-screen reading order otherwise. Unmapped and hidden windows are left
 // out; so is anything without a size to draw.
 function snapshotWindows(clients) {

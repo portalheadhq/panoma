@@ -1,4 +1,4 @@
-// node test.js — checks Exposé's snapshot, layout, filter, grouping and
+// node test.js — checks Panoma's snapshot, layout, filter, grouping and
 // selection rules.
 const assert = require("assert")
 const Model = require("./Model.js")

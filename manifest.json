@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "edu.expose",
-  "name": "Exposé",
+  "id": "panoma",
+  "name": "Panoma",
   "version": "0.1.0",
   "author": "edu",
   "description": "Three-finger swipe up (or Super+E) to see every window on the workspace as a live thumbnail, with a dock of running apps; type / to filter across all workspaces",
@@ -10,6 +10,6 @@
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "panel": "Expose.qml"
+    "panel": "Panoma.qml"
   }
 }

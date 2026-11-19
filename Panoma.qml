@@ -8,7 +8,7 @@ import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Exposé: the desktop zooms out. Every window on the workspace shrinks out of
+// Panoma: the desktop zooms out. Every window on the workspace shrinks out of
 // its real place into a grid, the wallpaper dims behind them, and the dock of
 // running apps rises from the bottom edge. Pick a window and it all flies
 // back, with that one focused.
@@ -29,7 +29,7 @@ import "Model.js" as Model
 Item {
   id: root
 
-  readonly property string pluginId: "edu.expose"
+  readonly property string pluginId: "panoma"
 
   // ---- State ----------------------------------------------------------------
 
@@ -50,7 +50,7 @@ Item {
   // The workspace the desktop shows at progress 0. Changes when a window on
   // another workspace is picked, so the overview lands there.
   property int homeWorkspace: 0
-  // The workspace Exposé opened on, and where closing should leave you: a
+  // The workspace Panoma opened on, and where closing should leave you: a
   // window ({ address }) or a workspace ({ workspace }), or null to stay.
   property int openedOn: 0
   property var landing: null
@@ -235,7 +235,7 @@ Item {
   }
 
   // When the overlay unmaps, Hyprland hands focus back to the window that had
-  // it before Exposé, which drags you back to the workspace it lives on. So
+  // it before Panoma, which drags you back to the workspace it lives on. So
   // the choice is made again, just after that has happened.
   Timer {
     id: landTimer
@@ -674,7 +674,7 @@ Item {
       workspaceId = id
       homeWorkspace = id
       // Its last window rather than the bare workspace: Hyprland remembers
-      // the window, and returns focus to it when Exposé lets go of the
+      // the window, and returns focus to it when Panoma lets go of the
       // keyboard, so you stay here instead of bouncing back.
       var last = Model.mostRecent(Model.onWorkspace(liveWindows, id))
       focusNow(last ? { address: last.address } : { workspace: id })
@@ -934,7 +934,7 @@ Item {
   }
 
   IpcHandler {
-    target: "edu.expose"
+    target: "panoma"
 
     function open(): string { root.show(); return "opening" }
     function toggle(): string { root.toggle(); return root.opened && !root.closing || root.loading ? "opening" : "closing" }
@@ -994,7 +994,7 @@ Item {
       return direction
     }
 
-    // omarchy-shell edu.expose status | jq
+    // omarchy-shell panoma status | jq
     function status(): string {
       return JSON.stringify({
         opened: root.opened,
@@ -1045,7 +1045,7 @@ Item {
         anchors { left: true; right: true; top: true; bottom: true }
         // Below the bar's reserved space, so the bar stays in view.
         exclusionMode: ExclusionMode.Normal
-        WlrLayershell.namespace: "omarchy-expose"
+        WlrLayershell.namespace: "panoma"
         WlrLayershell.layer: WlrLayer.Overlay
         // Only once it covers the real windows: taking focus earlier would
         // flash their borders inactive.
