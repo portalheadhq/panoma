@@ -1203,78 +1203,24 @@ Item {
     }
   }
 
+  // The public commands: omarchy-shell panoma <command>.
   IpcHandler {
     target: "panoma"
 
     function open(): string { root.show(); return "opening" }
     function toggle(): string { root.toggle(); return root.opened && !root.closing || root.loading ? "opening" : "closing" }
     function close(): string { root.dismiss(null); return "closing" }
-    // Only while open: one app on every workspace, or a typed filter.
-    function app(name: string): string {
-      if (!root.opened) return "closed"
-      var want = String(name).toLowerCase()
-      for (var i = 0; i < root.apps.length; i++) {
-        var a = root.apps[i]
-        if (a.key === want || String(root.appName(a.appId)).toLowerCase() === want) { root.showApp(a.key); return a.key }
-      }
-      return "no such app"
-    }
-    function filter(text: string): string {
-      if (!root.opened) return "closed"
-      root.setQuery(text)
-      return root.shown.length + " shown"
-    }
-    // Drags the overview to a progress as a swipe would, for trying the
-    // motion from a terminal: scrub 0.4, then release.
-    function scrub(value: string): string {
-      if (!root.tracking) root.trackBegin()
-      root.trackUpdate(Number(value) - root.trackBase)
-      return String(root.progress)
-    }
-    function release(): string { root.trackEnd(false); return "released" }
-    // Sideways, as a three-finger swipe in the overview: slide -0.4 (towards
-    // the next workspace), then slideRelease. step 1 / step -1 animates.
-    function slide(amount: string): string {
-      if (!root.canSlide() && !root.sliding) return "can't slide here"
-      if (!root.sliding) root.slideBegin()
-      root.slideTo(Number(amount))
-      return root.slide + " peek " + root.peekWorkspace
-    }
-    function slideRelease(): string { root.slideEnd(false); return "released" }
-    function step(dir: string): string { root.stepWorkspace(Number(dir)); return "stepping" }
-    // Only while open: show a workspace, or send the selected window to one.
-    function workspace(id: string): string { root.viewWorkspace(Number(id)); return String(root.workspaceId) }
-    function select(index: string): string {
-      var i = Number(index)
-      if (i >= 0 && i < root.shown.length) root.selected = i
-      return root.selectedWindow ? root.appName(root.selectedWindow.appId) : ""
-    }
-    function activate(): string {
-      var w = root.selectedWindow
-      root.focusWindow(w)
-      return w ? root.appName(w.appId) : ""
-    }
-    function send(id: string): string { root.moveWindow(root.selectedWindow, Number(id)); return root.shown.length + " shown" }
-    // Hyprland's three-finger up/down binds. Ignored while the touchpad
-    // reader is tracking the fingers itself.
-    // Settings: open the sheet, or read and change them from a terminal.
+
+    // Settings: open the sheet (on one group: gestures, look, show or keys),
+    // or read and change them from a terminal:
     //   omarchy-shell panoma setting backdrop 0.6
     //   omarchy-shell panoma setting keys.close x
     //   omarchy-shell panoma setting openBind 'SUPER + ALT + E'
     function settings(): string { root.openSettings(); return "opening settings" }
-    // Straight to one group: gestures, look, show or keys.
     function settingsTab(tab: string): string {
       root.settingsTabWanted = tab
       root.openSettings()
       return tab
-    }
-    // A new open shortcut, checked against Hyprland's binds like one recorded
-    // in the sheet: a taken combo waits for confirmation there.
-    function bind(combo: string): string {
-      var c = Model.normalizeCombo(combo)
-      if (c === "") return "not a usable combo"
-      root.requestBind(c)
-      return c
     }
     function get(): string { return JSON.stringify(root.cfg) }
     function setting(path: string, value: string): string {
@@ -1283,6 +1229,9 @@ Item {
       root.setSetting(path, v)
       return JSON.stringify(root.cfg)
     }
+
+    // Hyprland's three-finger up/down gestures (written to panoma.lua).
+    // Ignored while the touchpad reader is following the fingers itself.
     function gesture(direction: string): string {
       if (root.swipeReaderActive) return "tracked"
       if (direction === "up") root.show()
@@ -1317,6 +1266,68 @@ Item {
         }),
         dock: root.apps.map(function(a) { return { app: root.appName(a.appId), windows: a.count, here: a.onWorkspace } })
       })
+    }
+  }
+
+  // Development and testing: drive the overview from a terminal the way the
+  // touchpad, keyboard and mouse would, to try changes without them.
+  //   omarchy-shell panoma-dev scrub 0.4     (then: release)
+  IpcHandler {
+    target: "panoma-dev"
+
+    // A vertical swipe: scrub to a progress, then let go.
+    function scrub(value: string): string {
+      if (!root.tracking) root.trackBegin()
+      root.trackUpdate(Number(value) - root.trackBase)
+      return String(root.progress)
+    }
+    function release(): string { root.trackEnd(false); return "released" }
+
+    // A sideways swipe in the overview: slide -0.4 (towards the next
+    // workspace), then slideRelease; step 1 / step -1 animates it.
+    function slide(amount: string): string {
+      if (!root.canSlide() && !root.sliding) return "can't slide here"
+      if (!root.sliding) root.slideBegin()
+      root.slideTo(Number(amount))
+      return root.slide + " peek " + root.peekWorkspace
+    }
+    function slideRelease(): string { root.slideEnd(false); return "released" }
+    function step(dir: string): string { root.stepWorkspace(Number(dir)); return "stepping" }
+
+    // The rest only act while the overview is open.
+    function workspace(id: string): string { root.viewWorkspace(Number(id)); return String(root.workspaceId) }
+    function app(name: string): string {
+      if (!root.opened) return "closed"
+      var want = String(name).toLowerCase()
+      for (var i = 0; i < root.apps.length; i++) {
+        var a = root.apps[i]
+        if (a.key === want || String(root.appName(a.appId)).toLowerCase() === want) { root.showApp(a.key); return a.key }
+      }
+      return "no such app"
+    }
+    function filter(text: string): string {
+      if (!root.opened) return "closed"
+      root.setQuery(text)
+      return root.shown.length + " shown"
+    }
+    function select(index: string): string {
+      var i = Number(index)
+      if (i >= 0 && i < root.shown.length) root.selected = i
+      return root.selectedWindow ? root.appName(root.selectedWindow.appId) : ""
+    }
+    function activate(): string {
+      var w = root.selectedWindow
+      root.focusWindow(w)
+      return w ? root.appName(w.appId) : ""
+    }
+    function send(id: string): string { root.moveWindow(root.selectedWindow, Number(id)); return root.shown.length + " shown" }
+    // A new open shortcut, checked against Hyprland's binds like one recorded
+    // in the settings: a taken combo waits for confirmation there.
+    function bind(combo: string): string {
+      var c = Model.normalizeCombo(combo)
+      if (c === "") return "not a usable combo"
+      root.requestBind(c)
+      return c
     }
   }
 

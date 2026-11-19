@@ -158,11 +158,14 @@ repository into `~/.config/omarchy/plugins/panoma`, enable it with
 (panels that stay loaded keep their old code until then). Logs:
 `journalctl --user -t omarchy-shell -f`.
 
-To try the motion without a touchpad:
+`panoma-dev` holds commands for trying changes without a touchpad, keyboard or
+mouse: `scrub`/`release` (vertical swipe), `slide`/`slideRelease`/`step`
+(sideways), and, while the overview is open, `workspace`, `app`, `filter`,
+`select`, `activate`, `send` and `bind`. For example:
 
 ```bash
-omarchy-shell panoma scrub 0.4    # drag to 40%
-omarchy-shell panoma release      # let go: it settles open or closed
+omarchy-shell panoma-dev scrub 0.4    # drag to 40%
+omarchy-shell panoma-dev release      # let go: it settles open or closed
 omarchy-shell panoma status | jq
 ```
 
