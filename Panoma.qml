@@ -1446,9 +1446,12 @@ Item {
             id: dock
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: Style.space(20)
+            // Flush with the screen edge; the border's bottom side hangs just
+            // off it, so only the top and sides show.
+            anchors.bottomMargin: -border.width
             width: Math.min(implicitWidth, parent.width - 2 * Style.space(48))
-            height: implicitHeight
+            height: implicitHeight + border.width
+            cornerRadius: root.hyprRounding > 0 ? Math.round(root.hyprRounding * 1.5) : 0
             z: 3000
             apps: win.here ? root.apps : []
             activeKey: root.activeAppKey

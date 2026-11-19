@@ -20,11 +20,19 @@ Rectangle {
   readonly property int slotWidth: Style.space(68)
 
   implicitWidth: row.implicitWidth + 2 * Style.space(18)
-  implicitHeight: row.implicitHeight + Style.space(14) + Style.space(10)
+  // Sits on the bottom edge of the screen: rounded on top, square where it
+  // meets the edge, a little more room under the labels than above the icons.
+  property real cornerRadius: 0
+
+  implicitHeight: row.implicitHeight + Style.space(14) + Style.space(14)
   visible: apps.length > 0
   color: Util.alpha(Color.background, 0.9)
   border.width: 1
   border.color: Util.alpha(Color.foreground, 0.18)
+  topLeftRadius: cornerRadius
+  topRightRadius: cornerRadius
+  bottomLeftRadius: 0
+  bottomRightRadius: 0
 
   Row {
     id: row
