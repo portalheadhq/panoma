@@ -1,5 +1,7 @@
 # Panoma
 
+![Panoma: live thumbnails of the workspace, the workspace strip and the app dock](docs/screenshot.png)
+
 The desktop zooms out: every window on the workspace shrinks out of its real
 place into a grid over the wallpaper, and a dock of running apps rises from
 the bottom edge. Pick a window and everything flies back, with that one
