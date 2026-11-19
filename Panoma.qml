@@ -998,6 +998,48 @@ Item {
     return screens.length > 0 ? screens[0] : null
   }
 
+  // The wallpaper at the size the background service decodes it (the
+  // screen's real pixels), so Panoma's copy looks the same as the real one.
+  function wallpaperDecodeSize(screen) {
+    if (!screen) return Qt.size(0, 0)
+    var ratio = screen.devicePixelRatio > 0 ? screen.devicePixelRatio : 1
+    return Qt.size(Math.ceil(screen.width * ratio), Math.ceil(screen.height * ratio))
+  }
+
+  // Whether each screen's overlay has its wallpaper decoded and ready.
+  property var wallpaperReady: ({})
+
+  function noteWallpaper(screenName, ready) {
+    if (!screenName || wallpaperReady[screenName] === ready) return
+    var next = Object.assign({}, wallpaperReady)
+    next[screenName] = ready
+    wallpaperReady = next
+  }
+
+  function wallpaperReadyOn(screenName) {
+    return wallpaper === "" || wallpaperReady[screenName] === true
+  }
+
+  // Holds the decoded wallpaper for the whole session, one per screen, outside
+  // the overlay windows (those drop their images while hidden). Measured: an
+  // open used to re-decode it every time, ~550ms during which the start of the
+  // motion showed the theme's background instead of the wallpaper.
+  Repeater {
+    id: wallpaperHolder
+    model: root.wallpaper !== "" ? Quickshell.screens : []
+    Image {
+      required property var modelData
+      visible: false
+      source: root.wallpaper
+      sourceSize: root.wallpaperDecodeSize(modelData)
+      fillMode: Image.PreserveAspectCrop
+      asynchronous: true
+      cache: true
+      smooth: true
+      mipmap: true
+    }
+  }
+
   // Kept decoded between opens: a full-size image takes ~100ms+ to decode,
   // which would otherwise stall every open.
   function applyWallpaper(path) {
@@ -1109,7 +1151,11 @@ Item {
         if (root.revealWaited > 4000) root.cancelPrepared()
         return
       }
+      // Thumbnails get a short wait; the wallpaper a longer one, since without
+      // it the start would show the theme's background instead of the
+      // desktop. Preloaded, it's ready at once.
       if (!root.homeCaptured() && root.revealWaited < 200) return
+      if (!root.wallpaperReadyOn(root.screenName) && root.revealWaited < 900) return
       stop()
       root.revealed = true
       if (root.settingsAfterOpen) {
@@ -1347,20 +1393,25 @@ Item {
           }
 
           // Laid out over the whole monitor, so it lines up with the real one
-          // behind the bar.
+          // behind the bar. Requested exactly like the session-long copy in
+          // `wallpaperHolder` (same source, size and fill), so it is served
+          // from that already-decoded image instead of decoding it again.
           Image {
+            id: wallpaperImage
             x: -root.offset.x + (win.modelData ? win.modelData.x : 0)
             y: -root.offset.y + (win.modelData ? win.modelData.y : 0)
             width: win.modelData ? win.modelData.width : parent.width
             height: win.modelData ? win.modelData.height : parent.height
             visible: root.wallpaper !== ""
             source: root.wallpaper
-            sourceSize.width: width
-            sourceSize.height: height
+            sourceSize: root.wallpaperDecodeSize(win.modelData)
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
             cache: true
             smooth: true
+            mipmap: true
+            onStatusChanged: root.noteWallpaper(win.modelData ? win.modelData.name : "", status === Image.Ready)
+            Component.onCompleted: root.noteWallpaper(win.modelData ? win.modelData.name : "", status === Image.Ready)
           }
 
           // The wallpaper is only there so progress 0 matches the desktop; the
