@@ -293,4 +293,50 @@ assert.ok(lua4.includes('fingers = 4, direction = "up"') && lua4.includes('o.bin
 assert.ok(Model.hyprConfig({ openBind: 'SUPER + E") os.execute("x' }).includes('o.bind("SUPER + E", "Panoma"'))
 assert.strictEqual(Model.hyprConfig(defaults), lua, "same settings, same file: no needless rewrites")
 
+// ---- package: what `omarchy plugin add` checks, so CI catches it first ----
+const fs = require("fs")
+const path = require("path")
+const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "manifest.json"), "utf8"))
+for (const field of ["schemaVersion", "id", "name", "version", "kinds", "entryPoints"])
+  assert.ok(manifest[field] !== undefined && manifest[field] !== "", "manifest." + field)
+assert.match(manifest.id, /^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+assert.ok(!manifest.id.includes("..") && !manifest.id.startsWith("omarchy."), "id outside the reserved namespace")
+assert.match(manifest.version, /^\d+\.\d+\.\d+/)
+for (const kind of manifest.kinds) {
+  const entry = manifest.entryPoints[kind === "bar-widget" ? "barWidget" : kind]
+  assert.ok(entry && fs.existsSync(path.join(__dirname, entry)), "entry point for " + kind)
+}
+// No symlinks anywhere (the installer refuses them).
+const walk = (dir) => {
+  for (const name of fs.readdirSync(dir)) {
+    if (name === ".git" || name === "node_modules") continue
+    const p = path.join(dir, name)
+    const st = fs.lstatSync(p)
+    assert.ok(!st.isSymbolicLink(), "symlink: " + p)
+    if (st.isDirectory()) walk(p)
+  }
+}
+walk(__dirname)
+
+// Translations: every catalogue parses, English has every key the code
+// reads, and plural entries carry `one` and `other`.
+const i18n = path.join(__dirname, "i18n")
+const catalogs = {}
+for (const file of fs.readdirSync(i18n).filter((f) => f.endsWith(".json")))
+  catalogs[file.replace(/\.json$/, "")] = JSON.parse(fs.readFileSync(path.join(i18n, file), "utf8"))
+assert.ok(catalogs.en, "English is the fallback")
+const used = new Set()
+for (const file of fs.readdirSync(__dirname).filter((f) => f.endsWith(".qml"))) {
+  const src = fs.readFileSync(path.join(__dirname, file), "utf8")
+  for (const m of src.matchAll(/strings\.tn?\("([^"]+)"/g)) used.add(m[1])
+}
+for (const key of used) assert.ok(key in catalogs.en, "missing English string: " + key)
+for (const [code, cat] of Object.entries(catalogs)) {
+  for (const [key, value] of Object.entries(cat)) {
+    if (value && typeof value === "object") assert.ok("other" in value, code + ":" + key + " needs `other`")
+    else assert.strictEqual(typeof value, "string", code + ":" + key)
+  }
+}
+for (const key of Object.keys(catalogs.en)) assert.ok(key in catalogs.es, "Spanish is missing " + key)
+
 console.log("ok")
