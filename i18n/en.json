@@ -1,0 +1,28 @@
+{
+  "title": "exposé",
+  "workspace": "workspace %1",
+  "count.windows": {
+    "one": "%1 window",
+    "other": "%1 windows"
+  },
+  "count.workspaces": {
+    "one": "%1 workspace",
+    "other": "%1 workspaces"
+  },
+  "summary.across": "%1 on %2",
+  "filter.placeholder": "type to filter windows",
+  "badge.workspace": "ws %1",
+  "hint.jump": "jump",
+  "hint.focus": "focus",
+  "hint.close": "close",
+  "hint.back": "back",
+  "hint.filter": "filter",
+  "hint.nextApp": "next app",
+  "hint.allWindows": "all windows",
+  "empty.workspace": "No windows on this workspace",
+  "empty.filter": "No windows match",
+  "drop.move": "drop to move",
+  "hint.send": "send to",
+  "hint.drag": "move window",
+  "hint.drag.key": "drag"
+}
