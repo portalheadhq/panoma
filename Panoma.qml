@@ -30,6 +30,214 @@ Item {
   id: root
 
   readonly property string pluginId: "panoma"
+  // Handed in by the shell's panel loader; used to save settings.
+  property var shell: null
+
+  // ---- Settings ---------------------------------------------------------------
+  // Inline on Panoma's own entry in shell.json's plugins[] (where the shell
+  // keeps plugin options), read back through a watched FileView. Edits apply
+  // at once from `pendingSettings` and are saved shortly after, so a slider
+  // never snaps back while the write is on its way.
+
+  readonly property string configHome: Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")
+  property var savedSettings: ({})
+  property var pendingSettings: null
+  property bool settingsLoaded: false
+  readonly property var cfg: Model.panomaSettings(pendingSettings || savedSettings)
+
+  function dur(ms) {
+    return Style.duration(ms / Math.max(0.1, cfg.animationSpeed))
+  }
+
+  FileView {
+    id: shellConfigFile
+    path: root.configHome + "/omarchy/shell.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.readSettings(text())
+    onLoadFailed: { root.settingsLoaded = true; root.syncHypr() }
+  }
+
+  function readSettings(raw) {
+    var parsed = parseJson(raw)
+    // A half-written or broken file: keep what was there.
+    if (!parsed || typeof parsed !== "object") return
+    var list = Array.isArray(parsed.plugins) ? parsed.plugins : []
+    var entry = {}
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].id === pluginId) entry = list[i]
+    savedSettings = entry
+    if (pendingSettings && JSON.stringify(Model.panomaSettings(entry)) === JSON.stringify(pendingSettings)) pendingSettings = null
+    settingsLoaded = true
+    syncHypr()
+  }
+
+  function setSetting(path, value) {
+    pendingSettings = Model.withSetting(cfg, path, value)
+    saveTimer.restart()
+    syncHypr()
+  }
+
+  Timer {
+    id: saveTimer
+    interval: 400
+    onTriggered: root.saveSettings()
+  }
+
+  function saveSettings() {
+    if (!pendingSettings) return
+    var entry = JSON.parse(JSON.stringify(pendingSettings))
+    var wrote = shell && typeof shell.updateEntryInline === "function" ? shell.updateEntryInline(pluginId, entry) : false
+    // Nothing to write (already saved): nothing will come back to clear it.
+    if (!wrote && JSON.stringify(Model.panomaSettings(savedSettings)) === JSON.stringify(pendingSettings)) pendingSettings = null
+  }
+
+  // ---- Hyprland file ------------------------------------------------------------
+  // Panoma's bind, gestures and layer rule live in ~/.config/hypr/panoma.lua,
+  // rewritten from the settings whenever they'd produce something different,
+  // then Hyprland is reloaded and checked. If Hyprland complains about the
+  // file, the previous one goes back.
+
+  property string hyprOnDisk: ""
+  property bool hyprLoaded: false
+  property bool hyprBusy: false
+  property string hyprPrevious: ""
+  property bool hyprRestoring: false
+  // A file Hyprland refused: not written again until the settings change.
+  property string hyprRefused: ""
+  property bool hyprIntegrated: true
+  property string hyprError: ""
+
+  FileView {
+    id: hyprFile
+    path: root.configHome + "/hypr/panoma.lua"
+    printErrors: false
+    atomicWrites: true
+    onLoaded: { root.hyprOnDisk = text(); root.hyprLoaded = true; root.syncHypr() }
+    onLoadFailed: { root.hyprOnDisk = ""; root.hyprLoaded = true; root.syncHypr() }
+    onSaved: hyprCheck.running = true
+    onSaveFailed: {
+      root.hyprBusy = false
+      root.hyprError = "can't write " + path
+    }
+  }
+
+  function syncHypr() {
+    if (!settingsLoaded || !hyprLoaded || hyprBusy) return
+    var want = Model.hyprConfig(cfg)
+    if (want === hyprOnDisk || want === hyprRefused) return
+    hyprBusy = true
+    hyprPrevious = hyprOnDisk
+    hyprOnDisk = want
+    hyprError = ""
+    hyprFile.setText(want)
+  }
+
+  Process {
+    id: hyprCheck
+    command: ["bash", "-c", "hyprctl reload >/dev/null 2>&1; sleep 0.4; hyprctl configerrors; echo '@@'; hyprctl binds -j | jq '[.[] | select(.description == \"Panoma\")] | length'"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.afterHyprReload(text)
+    }
+  }
+
+  function afterHyprReload(out) {
+    var parts = String(out || "").split("@@")
+    var ours = parts[0].split("\n").filter(function(line) { return /panoma/i.test(line) }).join(" ").trim()
+    if (ours !== "" && !hyprRestoring && hyprPrevious !== "") {
+      hyprRestoring = true
+      hyprRefused = hyprOnDisk
+      hyprError = ours
+      hyprOnDisk = hyprPrevious
+      hyprFile.setText(hyprPrevious)
+      return
+    }
+    hyprRestoring = false
+    hyprBusy = false
+    hyprIntegrated = (Number(String(parts[1] || "").trim()) || 0) > 0
+    // The settings may have moved on while Hyprland reloaded.
+    syncHypr()
+  }
+
+  // Is hyprland.lua loading panoma.lua? Checked when the settings open. Binds
+  // made with o.bind report a function id as their arg, so it goes by the
+  // description panoma.lua gives the bind.
+  Process {
+    id: integrationProc
+    command: ["bash", "-c", "hyprctl binds -j | jq '[.[] | select(.description == \"Panoma\")] | length'"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.hyprIntegrated = (Number(String(text || "").trim()) || 0) > 0
+    }
+  }
+
+  // A new open combo is checked against Hyprland's binds first; a taken one
+  // waits for "use it anyway".
+  property string pendingBind: ""
+  property string pendingConflict: ""
+
+  function requestBind(combo) {
+    pendingBind = ""
+    pendingConflict = ""
+    bindsProc.combo = combo
+    bindsProc.running = true
+  }
+
+  Process {
+    id: bindsProc
+    property string combo: ""
+    command: ["hyprctl", "-j", "binds"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var conflict = Model.bindConflict(root.parseJson(text) || [], bindsProc.combo)
+        if (conflict !== "") {
+          root.pendingBind = bindsProc.combo
+          root.pendingConflict = conflict
+        } else {
+          root.setSetting("openBind", bindsProc.combo)
+        }
+      }
+    }
+  }
+
+  function confirmBind() {
+    if (pendingBind !== "") setSetting("openBind", pendingBind)
+    pendingBind = ""
+    pendingConflict = ""
+  }
+
+  function cancelBind() {
+    pendingBind = ""
+    pendingConflict = ""
+  }
+
+  // ---- Settings sheet ----------------------------------------------------------
+
+  property bool settingsOpen: false
+  property string settingsTabWanted: ""
+  // Asked for while closed: opens once the overview is up.
+  property bool settingsAfterOpen: false
+
+  function openSettings() {
+    if (!opened || closing) {
+      settingsAfterOpen = true
+      show()
+      return
+    }
+    settingsOpen = true
+    integrationProc.running = true
+  }
+
+  function closeSettings() {
+    settingsOpen = false
+    cancelBind()
+  }
+
+  readonly property int sendModifierMask: cfg.sendModifier === "CTRL" ? Qt.ControlModifier
+    : cfg.sendModifier === "ALT" ? Qt.AltModifier : Qt.ShiftModifier
+  readonly property string sendModifierLabel: cfg.sendModifier === "CTRL" ? "ctrl " : cfg.sendModifier === "ALT" ? "alt " : "⇧"
 
   // ---- State ----------------------------------------------------------------
 
@@ -155,7 +363,7 @@ Item {
     pendingDone = null
     progressAnim.stop()
     var distance = Math.abs(to - progress)
-    var duration = Style.duration(Math.max(120, ms * distance))
+    var duration = root.dur(Math.max(120, ms * distance))
     if (distance < 0.001 || duration <= 0) {
       progress = to
       if (done) done()
@@ -259,6 +467,9 @@ Item {
   property int landingWorkspace: 0
 
   function finishClose() {
+    settingsOpen = false
+    settingsAfterOpen = false
+    cancelBind()
     progressAnim.stop()
     pendingDone = null
     opened = false
@@ -349,13 +560,13 @@ Item {
   property real swipeDy: 0
   // Finger travel, in libinput's accelerated units, for the whole way open;
   // Hyprland's workspace swipe uses the same scale (workspace_swipe_distance).
-  property real swipeDistance: 300
+  readonly property real swipeDistance: cfg.swipeDistance
 
   function onSwipeLine(line) {
     var e = Model.parseSwipeLine(line)
     if (!e) return
     if (e.type === "begin") {
-      swipePhase = e.fingers === 3 ? "deciding" : "ignored"
+      swipePhase = e.fingers === cfg.fingers ? "deciding" : "ignored"
       swipeDx = 0
       swipeDy = 0
       if (swipePhase === "deciding" && !opened && !loading) {
@@ -400,7 +611,7 @@ Item {
         trackBegin()
       }
     }
-    if (swipePhase === "horizontal") slideTo(slideBase + swipeDx / swipeDistance)
+    if (swipePhase === "horizontal") slideTo(slideBase + (cfg.invertSideways ? -1 : 1) * swipeDx / swipeDistance)
     else trackUpdate(-swipeDy / swipeDistance)
   }
 
@@ -496,7 +707,7 @@ Item {
   function animateSlide(to, done) {
     slideAnim.stop()
     var distance = Math.abs(to - slide)
-    var duration = Style.duration(Math.max(100, 300 * distance))
+    var duration = root.dur(Math.max(100, 300 * distance))
     if (distance < 0.001 || duration <= 0) {
       slide = to
       if (done) done()
@@ -563,7 +774,7 @@ Item {
     // Plugins load from qs:// URLs, not file://; either way only the path
     // is wanted.
     command: ["bash", Qt.resolvedUrl("swipe-reader.sh").toString().replace(/^[a-z]+:\/\//, "")]
-    running: true
+    running: false
     stdout: SplitParser {
       onRead: (line) => {
         root.swipeReaderActive = true
@@ -573,8 +784,16 @@ Item {
     onExited: {
       root.swipeReaderActive = false
       root.swipePhase = ""
-      swipeRetry.start()
+      if (root.wantReader) swipeRetry.start()
     }
+  }
+
+  // Following the fingers is a setting; off, the reader stops and Hyprland's
+  // swipe binds (in panoma.lua) open and close Panoma instead.
+  readonly property bool wantReader: settingsLoaded && cfg.followFingers
+  onWantReaderChanged: {
+    swipeRetry.stop()
+    swipeProc.running = wantReader
   }
 
   // The touchpad may become readable later (permission granted, a device
@@ -582,7 +801,7 @@ Item {
   Timer {
     id: swipeRetry
     interval: 15000
-    onTriggered: swipeProc.running = true
+    onTriggered: if (root.wantReader) swipeProc.running = true
   }
 
   // ---- Apps -----------------------------------------------------------------
@@ -893,6 +1112,11 @@ Item {
       if (!root.homeCaptured() && root.revealWaited < 200) return
       stop()
       root.revealed = true
+      if (root.settingsAfterOpen) {
+        root.settingsAfterOpen = false
+        root.settingsOpen = true
+        integrationProc.running = true
+      }
       if (root.tracking) {
         root.progress = Model.clamp01(root.trackLast)
       } else if (root.trackVerdict === 0) {
@@ -987,6 +1211,32 @@ Item {
     function send(id: string): string { root.moveWindow(root.selectedWindow, Number(id)); return root.shown.length + " shown" }
     // Hyprland's three-finger up/down binds. Ignored while the touchpad
     // reader is tracking the fingers itself.
+    // Settings: open the sheet, or read and change them from a terminal.
+    //   omarchy-shell panoma setting backdrop 0.6
+    //   omarchy-shell panoma setting keys.close x
+    //   omarchy-shell panoma setting openBind 'SUPER + ALT + E'
+    function settings(): string { root.openSettings(); return "opening settings" }
+    // Straight to one group: gestures, look, show or keys.
+    function settingsTab(tab: string): string {
+      root.settingsTabWanted = tab
+      root.openSettings()
+      return tab
+    }
+    // A new open shortcut, checked against Hyprland's binds like one recorded
+    // in the sheet: a taken combo waits for confirmation there.
+    function bind(combo: string): string {
+      var c = Model.normalizeCombo(combo)
+      if (c === "") return "not a usable combo"
+      root.requestBind(c)
+      return c
+    }
+    function get(): string { return JSON.stringify(root.cfg) }
+    function setting(path: string, value: string): string {
+      var v
+      try { v = JSON.parse(value) } catch (e) { v = value }
+      root.setSetting(path, v)
+      return JSON.stringify(root.cfg)
+    }
     function gesture(direction: string): string {
       if (root.swipeReaderActive) return "tracked"
       if (direction === "up") root.show()
@@ -1058,11 +1308,12 @@ Item {
         onHereChanged: if (here) keys.forceActiveFocus()
 
         function dropTargetAt(at) {
+          if (!root.cfg.showStrip) return -1
           var q = stage.mapToItem(wsStrip, at.x, at.y)
           return wsStrip.workspaceAt(q.x, q.y)
         }
 
-        readonly property int gap: Style.space(24)
+        readonly property int gap: Style.space(root.cfg.spacing)
         readonly property int captionHeight: Style.space(24)
         readonly property var slots: Model.layoutRows(
           root.shown,
@@ -1078,6 +1329,8 @@ Item {
           grid.height)
 
         readonly property color muted: Util.alpha(Color.foreground, 0.55)
+        // Corners of the dock and the settings sheet.
+        readonly property real panelRadius: root.cfg.corners === "square" || root.hyprRounding <= 0 ? 0 : Math.round(root.hyprRounding * 1.5)
 
         Item {
           id: stage
@@ -1114,7 +1367,7 @@ Item {
           // overview itself sits on near-black, so the windows stand out.
           Rectangle {
             anchors.fill: parent
-            color: Qt.rgba(0, 0, 0, 0.88 * win.p)
+            color: Qt.rgba(0, 0, 0, root.cfg.backdrop * win.p)
           }
 
           MouseArea {
@@ -1136,7 +1389,7 @@ Item {
             height: implicitHeight
             z: 3000
             opacity: win.late
-            visible: opacity > 0
+            visible: opacity > 0 && root.cfg.showStrip
             transform: Translate { y: -Style.space(18) * (1 - win.late) }
             workspaces: root.strip
             offset: root.offset
@@ -1158,8 +1411,8 @@ Item {
             id: grid
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.top: wsStrip.bottom
-            anchors.bottom: dock.top
+            anchors.top: root.cfg.showStrip ? wsStrip.bottom : header.bottom
+            anchors.bottom: root.cfg.showDock ? dock.top : parent.bottom
             anchors.margins: Style.space(32)
             anchors.topMargin: Style.space(20)
             anchors.bottomMargin: Style.space(16)
@@ -1202,7 +1455,7 @@ Item {
               readonly property var slot: gridSlot || lastSlot || real
 
               property real shownFactor: inView || inPeek ? 1 : 0
-              Behavior on shownFactor { NumberAnimation { duration: Style.duration(180); easing.type: Easing.OutCubic } }
+              Behavior on shownFactor { NumberAnimation { duration: root.dur(180); easing.type: Easing.OutCubic } }
 
               readonly property var frameNow: Model.tileFrame(real, slot, win.p, home, shownFactor, isGone)
 
@@ -1219,10 +1472,10 @@ Item {
 
               // Re-layouts (filtering, a window closed) glide; the morph
               // itself is driven frame by frame and must not lag behind.
-              Behavior on x { enabled: !root.morphing && !tile.dragging; NumberAnimation { duration: Style.duration(200); easing.type: Easing.OutCubic } }
-              Behavior on y { enabled: !root.morphing && !tile.dragging; NumberAnimation { duration: Style.duration(200); easing.type: Easing.OutCubic } }
-              Behavior on width { enabled: !root.morphing && !tile.dragging; NumberAnimation { duration: Style.duration(200); easing.type: Easing.OutCubic } }
-              Behavior on height { enabled: !root.morphing && !tile.dragging; NumberAnimation { duration: Style.duration(200); easing.type: Easing.OutCubic } }
+              Behavior on x { enabled: !root.morphing && !tile.dragging; NumberAnimation { duration: root.dur(200); easing.type: Easing.OutCubic } }
+              Behavior on y { enabled: !root.morphing && !tile.dragging; NumberAnimation { duration: root.dur(200); easing.type: Easing.OutCubic } }
+              Behavior on width { enabled: !root.morphing && !tile.dragging; NumberAnimation { duration: root.dur(200); easing.type: Easing.OutCubic } }
+              Behavior on height { enabled: !root.morphing && !tile.dragging; NumberAnimation { duration: root.dur(200); easing.type: Easing.OutCubic } }
 
               toplevel: handle ? handle.wayland : null
               capturing: win.here && !isGone
@@ -1233,10 +1486,12 @@ Item {
               appName: root.appName(modelData.appId)
               icon: root.appIcon(modelData.appId)
               draggable: !root.closing && !root.sliding
-              cornerRadius: root.hyprRounding
+              // Matches the real window at the start; square in the overview
+              // if that's the setting.
+              cornerRadius: root.hyprRounding * (root.cfg.corners === "square" ? 1 - win.p : 1)
               hyprBorderWidth: root.hyprBorderSize
               hyprBorder: modelData.address === root.activeAddress ? root.hyprActiveBorder : root.hyprInactiveBorder
-              badge: !inView ? ""
+              badge: !inView || !root.cfg.showBadges ? ""
                 : root.across ? strings.t("badge.workspace").arg(Model.workspaceBadge(current.workspaceId))
                 : (shownAt < 9 ? String(shownAt + 1) : "")
 
@@ -1406,15 +1661,49 @@ Item {
               }
             }
 
-            Row {
+            // Settings: the gear, or the settings key.
+            Rectangle {
+              id: gear
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(30)
+              height: width
+              radius: Style.space(4)
+              color: root.settingsOpen ? Util.alpha(Color.accent, 0.2) : gearArea.containsMouse ? Util.alpha(Color.foreground, 0.1) : "transparent"
+
+              Image {
+                anchors.centerIn: parent
+                width: Style.space(18)
+                height: width
+                sourceSize.width: 64
+                sourceSize.height: 64
+                source: "data:image/svg+xml;utf8," + encodeURIComponent(
+                  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='" + String(root.settingsOpen ? Color.accent : Color.foreground) +
+                  "' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='3'/>" +
+                  "<path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z'/></svg>")
+              }
+
+              MouseArea {
+                id: gearArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.settingsOpen ? root.closeSettings() : root.openSettings()
+              }
+            }
+
+            Row {
+              anchors.right: gear.left
+              anchors.rightMargin: Style.space(16)
+              anchors.verticalCenter: parent.verticalCenter
               spacing: Style.space(16)
+              visible: root.cfg.showHints
 
               Repeater {
                 model: root.across
-                  ? [["tab", "hint.nextApp"], ["enter", "hint.focus"], ["q", "hint.close"], ["esc", "hint.allWindows"]]
-                  : [["1–9", "hint.jump"], ["⇧1–9", "hint.send"], ["drag", "hint.drag"], ["q", "hint.close"], ["/", "hint.filter"], ["esc", "hint.back"]]
+                  ? [["tab", "hint.nextApp"], ["enter", "hint.focus"], [root.cfg.keys.close, "hint.close"], ["esc", "hint.allWindows"]]
+                  : [["1–9", "hint.jump"], [root.sendModifierLabel + "1–9", "hint.send"], [strings.t("hint.drag.key"), "hint.drag"],
+                     [root.cfg.keys.close, "hint.close"], [root.cfg.keys.filter, "hint.filter"], ["esc", "hint.back"]]
 
                 Row {
                   required property var modelData
@@ -1451,7 +1740,8 @@ Item {
             anchors.bottomMargin: -border.width
             width: Math.min(implicitWidth, parent.width - 2 * Style.space(48))
             height: implicitHeight + border.width
-            cornerRadius: root.hyprRounding > 0 ? Math.round(root.hyprRounding * 1.5) : 0
+            cornerRadius: win.panelRadius
+            iconSize: Style.space(root.cfg.dockIconSize)
             z: 3000
             apps: win.here ? root.apps : []
             activeKey: root.activeAppKey
@@ -1459,15 +1749,82 @@ Item {
             nameFor: function(appId) { return root.appName(appId) }
             opacity: Math.min(1, win.p * 1.6)
             transform: Translate { y: (dock.height + Style.space(40)) * (1 - win.p) }
-            // Click: go to the app (its most recent window, wherever it is).
-            onPicked: (app) => root.focusWindow(Model.mostRecent(app.windows))
-            // Right-click: all of its windows, on every workspace.
-            onExpanded: (app) => {
-              if (root.appKey === app.key) root.back()
-              else root.showApp(app.key)
-              keys.forceActiveFocus()
-            }
+            visible: root.cfg.showDock && apps.length > 0
+            // Click does what the setting says; right-click the other one.
+            onPicked: (app) => root.cfg.dockClick === "focus" ? win.goToApp(app) : win.showAppWindows(app)
+            onExpanded: (app) => root.cfg.dockClick === "focus" ? win.showAppWindows(app) : win.goToApp(app)
           }
+
+          // ---- Settings ----
+
+          // Clicking anywhere outside the sheet closes it (and only it).
+          MouseArea {
+            anchors.fill: parent
+            z: 3990
+            enabled: root.settingsOpen
+            visible: enabled
+            onClicked: root.closeSettings()
+          }
+
+          SettingsSheet {
+            id: sheet
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.margins: Style.space(12)
+            width: Math.min(Style.space(440), parent.width - 2 * Style.space(12))
+            z: 4000
+            focus: root.settingsOpen
+            visible: slideIn > 0.001
+            property real slideIn: root.settingsOpen ? 1 : 0
+            Behavior on slideIn { NumberAnimation { duration: root.dur(220); easing.type: Easing.OutCubic } }
+            opacity: slideIn
+            transform: Translate { x: (1 - sheet.slideIn) * Style.space(60) }
+            cornerRadius: win.panelRadius
+            cfg: root.cfg
+            Connections {
+              target: root
+              function onSettingsTabWantedChanged() {
+                if (root.settingsTabWanted !== "") sheet.tab = root.settingsTabWanted
+                root.settingsTabWanted = ""
+              }
+            }
+            hyprIntegrated: root.hyprIntegrated
+            hyprError: root.hyprError
+            pendingBind: root.pendingBind
+            pendingConflict: root.pendingConflict
+            onSetValue: (path, value) => root.setSetting(path, value)
+            onRequestBind: (combo) => root.requestBind(combo)
+            onConfirmBind: root.confirmBind()
+            onCancelBind: root.cancelBind()
+            onCloseRequested: root.closeSettings()
+          }
+        }
+
+        function goToApp(app) {
+          root.focusWindow(Model.mostRecent(app.windows))
+        }
+
+        function showAppWindows(app) {
+          if (root.appKey === app.key) root.back()
+          else root.showApp(app.key)
+          keys.forceActiveFocus()
+        }
+
+        // Keys go to the sheet while it's open, back to the overview after.
+        Connections {
+          target: root
+          function onSettingsOpenChanged() {
+            if (root.settingsOpen) sheet.forceActiveFocus()
+            else keys.forceActiveFocus()
+          }
+        }
+
+        // Recording a shortcut: keep Hyprland's own binds from firing, so the
+        // combo reaches the settings row.
+        ShortcutInhibitor {
+          window: win
+          enabled: win.here && sheet.capturing
         }
 
         // ---- Keys ----
@@ -1478,8 +1835,8 @@ Item {
           focus: true
 
           Keys.onPressed: (event) => {
-            if (root.closing) return
-            if (event.modifiers & Qt.ShiftModifier) {
+            if (root.closing || root.settingsOpen) return
+            if (event.modifiers & root.sendModifierMask) {
               var target = Model.workspaceFromScanCode(event.nativeScanCode)
               if (target > 0) {
                 root.moveWindow(root.selectedWindow, target)
@@ -1497,20 +1854,23 @@ Item {
               event.accepted = true
               return
             }
+            var typed = String(event.text || "").toLowerCase()
             var jump = Model.digitIndex(event.text)
             if (jump >= 0 && !(event.modifiers & (Qt.ShiftModifier | Qt.ControlModifier | Qt.AltModifier))) {
               if (jump < root.shown.length) root.focusWindow(root.shown[jump])
             }
             else if (event.key === Qt.Key_Escape) root.back()
             else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) root.focusWindow(root.selectedWindow)
+            // The configurable keys (never digits, space or h/j/k/l).
+            else if (typed !== "" && typed === root.cfg.keys.settings) root.openSettings()
+            else if (typed !== "" && typed === root.cfg.keys.filter) filter.forceActiveFocus()
+            else if (typed !== "" && typed === root.cfg.keys.close) root.closeWindow(root.selectedWindow)
             else if (event.key === Qt.Key_Left || event.key === Qt.Key_H) root.selected = Model.stepSelection(win.slots, root.selected, "left")
             else if (event.key === Qt.Key_Right || event.key === Qt.Key_L) root.selected = Model.stepSelection(win.slots, root.selected, "right")
             else if (event.key === Qt.Key_Up || event.key === Qt.Key_K) root.selected = Model.stepSelection(win.slots, root.selected, "up")
             else if (event.key === Qt.Key_Down || event.key === Qt.Key_J) root.selected = Model.stepSelection(win.slots, root.selected, "down")
             else if (event.key === Qt.Key_Tab) root.stepApp(1)
             else if (event.key === Qt.Key_Backtab) root.stepApp(-1)
-            else if (event.key === Qt.Key_Q || event.key === Qt.Key_X) root.closeWindow(root.selectedWindow)
-            else if (event.key === Qt.Key_Slash) filter.forceActiveFocus()
             else return
             event.accepted = true
           }

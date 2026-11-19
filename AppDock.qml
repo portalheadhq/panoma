@@ -16,8 +16,8 @@ Rectangle {
   signal picked(var app)
   signal expanded(var app)
 
-  readonly property int iconSize: Style.space(48)
-  readonly property int slotWidth: Style.space(68)
+  property int iconSize: Style.space(48)
+  readonly property int slotWidth: iconSize + Style.space(20)
 
   implicitWidth: row.implicitWidth + 2 * Style.space(18)
   // Sits on the bottom edge of the screen: rounded on top, square where it
@@ -25,7 +25,6 @@ Rectangle {
   property real cornerRadius: 0
 
   implicitHeight: row.implicitHeight + Style.space(14) + Style.space(14)
-  visible: apps.length > 0
   color: Util.alpha(Color.background, 0.9)
   border.width: 1
   border.color: Util.alpha(Color.foreground, 0.18)

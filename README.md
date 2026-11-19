@@ -7,7 +7,7 @@ place into a grid over the wallpaper, and a dock of running apps rises from
 the bottom edge. Pick a window and everything flies back, with that one
 focused.
 
-- **Super+E** toggles it (`~/.config/hypr/bindings.lua`).
+- **Super+E** toggles it (configurable, see Settings).
 - **Three-finger swipe up** opens it, **down** closes it. With touchpad access
   (below) the overview follows your fingers, the way the workspace swipe does;
   let go past halfway (or flick) and it finishes, otherwise it falls back.
@@ -21,6 +21,41 @@ focused.
 - **Three fingers sideways** inside Panoma slides to the next or previous
   workspace, following the fingers (Ctrl+←/→ or PageUp/PageDown from the
   keyboard). Wherever you end up is where closing leaves you.
+
+## Settings
+
+The gear at the top right of the overview (or `,`) opens Panoma's settings
+over it; every change shows live behind the sheet.
+
+- **Gestures**: 3 or 4 fingers, follow the fingers or just trigger, swipe
+  distance (sensitivity), invert the sideways swipe.
+- **Look**: background darkness, corners like your windows or square, space
+  between windows, animation speed, dock icon size.
+- **Show**: workspace strip, dock, key hints, window numbers, and what a click
+  on a dock app does (right-click does the other).
+- **Keys**: the Hyprland shortcut that opens Panoma (click it, press the
+  combination; a combination already in use asks first), the filter / close /
+  settings keys inside the overview, and the modifier that sends a window to a
+  workspace.
+
+Settings are saved on Panoma's entry in `~/.config/omarchy/shell.json`. From a
+terminal: `omarchy-shell panoma get`, `omarchy-shell panoma setting backdrop 0.6`,
+`omarchy-shell panoma settingsTab keys`.
+
+### Hyprland
+
+Panoma writes its shortcut, its swipe gestures and the rule that keeps
+Hyprland's layer fade off it to `~/.config/hypr/panoma.lua`, rewriting it
+whenever those settings change (then it reloads Hyprland, and puts the previous
+file back if Hyprland rejects the new one). Hyprland loads it with one line in
+`~/.config/hypr/hyprland.lua`, after the other `require`s:
+
+```lua
+pcall(require, "hypr.panoma")
+```
+
+`pcall` keeps Hyprland happy if Panoma is ever removed. Don't edit
+`panoma.lua` by hand; change the settings instead.
 
 ## Following the fingers (one-time setup)
 
@@ -38,7 +73,7 @@ sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=input --
 ```
 
 The shell picks it up within 15 seconds (`omarchy-shell panoma status | jq .swipeReader`
-turns `true`). Without it, the Hyprland swipe binds in `input.lua` still open
+turns `true`). Without it, the swipe gestures in `panoma.lua` still open
 and close Panoma, just without tracking the fingers.
 
 To undo: `sudo rm /etc/udev/rules.d/70-touchpad-uaccess.rules` and trigger udev again.

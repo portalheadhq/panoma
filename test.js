@@ -211,4 +211,86 @@ assert.strictEqual(Model.neighborWorkspace([1, 2, 3], 3, 1, true), 4, "a fresh o
 assert.strictEqual(Model.neighborWorkspace([1, 2, 3], 3, 1, false), -1, "but not from an empty one")
 assert.strictEqual(Model.neighborWorkspace([2, 4], 3, 1, true), 4, "current missing from the strip still finds its place")
 
+// ---- settings ----
+const defaults = Model.panomaSettings(undefined)
+assert.deepStrictEqual(defaults, Model.SETTINGS_DEFAULTS)
+assert.deepStrictEqual(Model.panomaSettings({ id: "panoma" }), Model.SETTINGS_DEFAULTS, "the bare entry is all defaults")
+assert.deepStrictEqual(Model.panomaSettings("junk"), Model.SETTINGS_DEFAULTS)
+assert.deepStrictEqual(Model.panomaSettings([1, 2]), Model.SETTINGS_DEFAULTS)
+
+const odd = Model.panomaSettings({
+  fingers: 5, swipeDistance: 9999, backdrop: -1, spacing: "20", animationSpeed: true, dockIconSize: null,
+  corners: "round", dockClick: "windows", showDock: "no", showStrip: false, sendModifier: "SUPER",
+  openBind: "super+shift+e", keys: { filter: "F", close: "1", settings: "f" }
+})
+assert.strictEqual(odd.fingers, 3, "only 3 or 4 fingers")
+assert.strictEqual(odd.swipeDistance, 600, "clamped high")
+assert.strictEqual(odd.backdrop, 0, "clamped low")
+assert.strictEqual(odd.spacing, 20, "numeric strings are fine")
+assert.strictEqual(odd.animationSpeed, 1, "a boolean is not a number")
+assert.strictEqual(odd.dockIconSize, 48, "null is not a number")
+assert.strictEqual(odd.corners, "hyprland")
+assert.strictEqual(odd.dockClick, "windows")
+assert.strictEqual(odd.showDock, true, "only real booleans")
+assert.strictEqual(odd.showStrip, false)
+assert.strictEqual(odd.sendModifier, "SHIFT", "SUPER would fight Hyprland's own binds")
+assert.strictEqual(odd.openBind, "SUPER + SHIFT + E")
+assert.deepStrictEqual(odd.keys, { filter: "f", close: "q", settings: "," }, "digits refused; a duplicate falls back")
+
+const changed = Model.withSetting(defaults, "keys.close", "x")
+assert.strictEqual(changed.keys.close, "x")
+assert.strictEqual(defaults.keys.close, "q", "the original is untouched")
+assert.strictEqual(Model.withSetting(defaults, "backdrop", 0.5).backdrop, 0.5)
+assert.strictEqual(Model.withSetting(defaults, "fingers", 7).fingers, 3, "still validated")
+
+// ---- keys & combos ----
+assert.strictEqual(Model.normalizeKey("Q"), "q")
+assert.strictEqual(Model.normalizeKey("/"), "/")
+for (const bad of ["", "ab", " ", "5", "h", "J", "\n", "é", null, undefined]) assert.strictEqual(Model.normalizeKey(bad), "", JSON.stringify(bad))
+
+assert.strictEqual(Model.normalizeCombo("SUPER + E"), "SUPER + E")
+assert.strictEqual(Model.normalizeCombo("shift + super + e"), "SUPER + SHIFT + E", "canonical modifier order")
+assert.strictEqual(Model.normalizeCombo("control+alt+delete"), "CTRL + ALT + DELETE")
+assert.strictEqual(Model.normalizeCombo("F5"), "F5", "a function key alone is allowed")
+assert.strictEqual(Model.normalizeCombo("E"), "", "a bare letter would be stolen from every app")
+assert.strictEqual(Model.normalizeCombo("SUPER"), "", "no key")
+assert.strictEqual(Model.normalizeCombo("SUPER + HYPER + E"), "", "unknown modifier")
+// Nothing that could break out of the Lua string.
+for (const evil of ['SUPER + E") os.execute("rm -rf ~', 'SUPER + "', "SUPER + E\nos.exit()", "SUPER + ]]", "SUPER + E;"])
+  assert.strictEqual(Model.normalizeCombo(evil), "", JSON.stringify(evil))
+
+const META = 0x10000000, CTRL = 0x04000000, ALT = 0x08000000, SHIFT = 0x02000000
+assert.strictEqual(Model.comboFromEvent(0x45, META), "SUPER + E")
+assert.strictEqual(Model.comboFromEvent(0x45, META | SHIFT), "SUPER + SHIFT + E")
+assert.strictEqual(Model.comboFromEvent(0x01000033, 0), "F4")
+assert.strictEqual(Model.comboFromEvent(0x2c, META | CTRL), "SUPER + CTRL + COMMA")
+assert.strictEqual(Model.comboFromEvent(0x45, 0), "", "needs a modifier")
+assert.strictEqual(Model.comboFromEvent(0x01000020, META), "", "Shift itself isn't a key to bind")
+assert.strictEqual(Model.comboFromEvent(0x20, META | ALT), "SUPER + ALT + SPACE")
+
+const binds = [
+  { modmask: 64, key: "E", description: "Panoma", arg: "omarchy-shell panoma toggle" },
+  { modmask: 64, key: "W", description: "Close window" },
+  { modmask: 65, key: "F", description: "File manager" },
+  { modmask: 64, key: "grave", description: "Toggle Quake console" }
+]
+assert.strictEqual(Model.bindConflict(binds, "SUPER + E"), "", "Panoma's own bind is not a conflict")
+assert.strictEqual(Model.bindConflict(binds, "SUPER + W"), "Close window")
+assert.strictEqual(Model.bindConflict(binds, "SUPER + SHIFT + F"), "File manager")
+assert.strictEqual(Model.bindConflict(binds, "SUPER + GRAVE"), "Toggle Quake console", "key names compare case-insensitively")
+assert.strictEqual(Model.bindConflict(binds, "SUPER + O"), "")
+assert.strictEqual(Model.bindConflict(binds, "junk"), "")
+
+// ---- generated Hyprland file ----
+const lua = Model.hyprConfig(defaults)
+assert.ok(lua.includes('o.bind("SUPER + E", "Panoma", "omarchy-shell panoma toggle")'), lua)
+assert.ok(lua.includes('hl.gesture({ fingers = 3, direction = "up"'))
+assert.ok(lua.includes('omarchy-shell panoma gesture down'))
+assert.ok(lua.includes('namespace = "panoma" }, no_anim = true'))
+const lua4 = Model.hyprConfig(Model.withSetting(Model.withSetting(defaults, "fingers", 4), "openBind", "SUPER + ALT + P"))
+assert.ok(lua4.includes('fingers = 4, direction = "up"') && lua4.includes('o.bind("SUPER + ALT + P"'))
+// A broken setting can only ever produce the default bind.
+assert.ok(Model.hyprConfig({ openBind: 'SUPER + E") os.execute("x' }).includes('o.bind("SUPER + E", "Panoma"'))
+assert.strictEqual(Model.hyprConfig(defaults), lua, "same settings, same file: no needless rewrites")
+
 console.log("ok")

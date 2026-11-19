@@ -393,6 +393,210 @@ function neighborWorkspace(stripIds, current, dir, currentHasWindows) {
   return -1
 }
 
+// ---- Settings --------------------------------------------------------------------
+// Stored inline on Panoma's own entry in shell.json's plugins[]; anything
+// missing or out of range falls back to the default, so a hand-edited or
+// half-written entry never breaks the overview.
+
+var SETTINGS_DEFAULTS = {
+  fingers: 3,
+  swipeDistance: 300,
+  invertSideways: false,
+  followFingers: true,
+  backdrop: 0.88,
+  corners: "hyprland",
+  spacing: 24,
+  animationSpeed: 1,
+  dockIconSize: 48,
+  showStrip: true,
+  showDock: true,
+  showHints: true,
+  showBadges: true,
+  dockClick: "focus",
+  openBind: "SUPER + E",
+  keys: { filter: "/", close: "q", settings: "," },
+  sendModifier: "SHIFT"
+}
+
+function clampNumber(v, lo, hi, fallback) {
+  var n = Number(v)
+  if (typeof v === "boolean" || v === null || v === "" || !isFinite(n)) return fallback
+  return Math.min(hi, Math.max(lo, n))
+}
+
+function oneOf(v, options, fallback) {
+  return options.indexOf(v) !== -1 ? v : fallback
+}
+
+function boolOr(v, fallback) {
+  return typeof v === "boolean" ? v : fallback
+}
+
+function panomaSettings(raw) {
+  var r = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}
+  var d = SETTINGS_DEFAULTS
+  var keys = r.keys && typeof r.keys === "object" ? r.keys : {}
+  var picked = {
+    filter: normalizeKey(keys.filter) || d.keys.filter,
+    close: normalizeKey(keys.close) || d.keys.close,
+    settings: normalizeKey(keys.settings) || d.keys.settings
+  }
+  // Two actions on one key: the later ones go back to their defaults.
+  if (picked.close === picked.filter) picked.close = d.keys.close
+  if (picked.settings === picked.filter || picked.settings === picked.close) picked.settings = d.keys.settings
+  return {
+    fingers: oneOf(Number(r.fingers), [3, 4], d.fingers),
+    swipeDistance: Math.round(clampNumber(r.swipeDistance, 150, 600, d.swipeDistance)),
+    invertSideways: boolOr(r.invertSideways, d.invertSideways),
+    followFingers: boolOr(r.followFingers, d.followFingers),
+    backdrop: clampNumber(r.backdrop, 0, 1, d.backdrop),
+    corners: oneOf(r.corners, ["hyprland", "square"], d.corners),
+    spacing: Math.round(clampNumber(r.spacing, 8, 48, d.spacing)),
+    animationSpeed: clampNumber(r.animationSpeed, 0.5, 2, d.animationSpeed),
+    dockIconSize: Math.round(clampNumber(r.dockIconSize, 32, 64, d.dockIconSize)),
+    showStrip: boolOr(r.showStrip, d.showStrip),
+    showDock: boolOr(r.showDock, d.showDock),
+    showHints: boolOr(r.showHints, d.showHints),
+    showBadges: boolOr(r.showBadges, d.showBadges),
+    dockClick: oneOf(r.dockClick, ["focus", "windows"], d.dockClick),
+    openBind: normalizeCombo(r.openBind) || d.openBind,
+    keys: picked,
+    sendModifier: oneOf(r.sendModifier, ["SHIFT", "CTRL", "ALT"], d.sendModifier)
+  }
+}
+
+// A setting path ("backdrop", "keys.close") set to a value, on a copy.
+function withSetting(cfg, path, value) {
+  var next = JSON.parse(JSON.stringify(cfg))
+  var parts = String(path).split(".")
+  var target = next
+  for (var i = 0; i < parts.length - 1; i++) {
+    if (!target[parts[i]] || typeof target[parts[i]] !== "object") target[parts[i]] = {}
+    target = target[parts[i]]
+  }
+  target[parts[parts.length - 1]] = value
+  return panomaSettings(next)
+}
+
+// ---- Keys and Hyprland binds ------------------------------------------------------
+
+// Overview keys are single characters. Digits, space and h/j/k/l already
+// move and jump, so they can't be taken.
+function normalizeKey(v) {
+  var k = String(v === undefined || v === null ? "" : v)
+  if (k.length !== 1) return ""
+  if (!/^[\x21-\x7e]$/.test(k)) return ""
+  k = k.toLowerCase()
+  if (/^[0-9hjkl]$/.test(k)) return ""
+  return k
+}
+
+var MODIFIER_ORDER = ["SUPER", "CTRL", "ALT", "SHIFT"]
+var MODIFIER_BITS = { SHIFT: 1, CTRL: 4, ALT: 8, SUPER: 64 }
+
+// Key names a combo may end in. Everything Panoma writes into panoma.lua goes
+// through this list, so nothing typed or captured can reach the Lua as code.
+var NAMED_KEYS = ["SPACE", "RETURN", "TAB", "BACKSPACE", "DELETE", "HOME", "END", "LEFT", "RIGHT", "UP", "DOWN",
+  "COMMA", "PERIOD", "SLASH", "MINUS", "EQUAL", "GRAVE", "SEMICOLON", "APOSTROPHE", "BRACKETLEFT", "BRACKETRIGHT", "BACKSLASH"]
+
+function isComboKey(k) {
+  return /^[A-Z]$/.test(k) || /^[0-9]$/.test(k) || /^F([1-9]|1[0-9]|2[0-4])$/.test(k) || NAMED_KEYS.indexOf(k) !== -1
+}
+
+// "super+shift + f" → "SUPER + SHIFT + F"; "" when it isn't a usable combo.
+// A combo needs a modifier, except a function key, so a plain letter is never
+// grabbed from every app.
+function normalizeCombo(v) {
+  var parts = String(v || "").toUpperCase().split("+").map(function(p) { return p.trim() }).filter(function(p) { return p !== "" })
+  if (parts.length === 0 || parts.length > 5) return ""
+  var key = parts[parts.length - 1]
+  if (key === "CONTROL") key = "CTRL"
+  if (MODIFIER_ORDER.indexOf(key) !== -1 || !isComboKey(key)) return ""
+  var mods = {}
+  for (var i = 0; i < parts.length - 1; i++) {
+    var m = parts[i] === "CONTROL" ? "CTRL" : parts[i] === "META" || parts[i] === "WIN" ? "SUPER" : parts[i]
+    if (MODIFIER_ORDER.indexOf(m) === -1) return ""
+    mods[m] = true
+  }
+  var ordered = MODIFIER_ORDER.filter(function(m) { return mods[m] })
+  if (ordered.length === 0 && !/^F\d+$/.test(key)) return ""
+  return ordered.concat([key]).join(" + ")
+}
+
+// A captured key press (Qt key code, Qt modifier flags) → a combo, or "".
+var QT_KEYS = {
+  0x20: "SPACE", 0x2c: "COMMA", 0x2e: "PERIOD", 0x2f: "SLASH", 0x2d: "MINUS", 0x3d: "EQUAL", 0x60: "GRAVE",
+  0x3b: "SEMICOLON", 0x27: "APOSTROPHE", 0x5b: "BRACKETLEFT", 0x5d: "BRACKETRIGHT", 0x5c: "BACKSLASH",
+  0x01000004: "RETURN", 0x01000005: "RETURN", 0x01000001: "TAB", 0x01000003: "BACKSPACE", 0x01000007: "DELETE",
+  0x01000010: "HOME", 0x01000011: "END", 0x01000012: "LEFT", 0x01000013: "UP", 0x01000014: "RIGHT", 0x01000015: "DOWN"
+}
+
+function comboFromEvent(key, modifiers) {
+  var name = ""
+  if (key >= 0x41 && key <= 0x5a) name = String.fromCharCode(key)
+  else if (key >= 0x30 && key <= 0x39) name = String.fromCharCode(key)
+  else if (key >= 0x01000030 && key <= 0x01000047) name = "F" + (key - 0x01000030 + 1)
+  else if (QT_KEYS[key]) name = QT_KEYS[key]
+  if (!name) return ""
+  var mods = []
+  if (modifiers & 0x10000000) mods.push("SUPER")
+  if (modifiers & 0x04000000) mods.push("CTRL")
+  if (modifiers & 0x08000000) mods.push("ALT")
+  if (modifiers & 0x02000000) mods.push("SHIFT")
+  return normalizeCombo(mods.concat([name]).join(" + "))
+}
+
+function comboMask(combo) {
+  var parts = String(combo).split(" + ")
+  var mask = 0
+  for (var i = 0; i < parts.length - 1; i++) mask |= MODIFIER_BITS[parts[i]] || 0
+  return mask
+}
+
+// What else in `hyprctl binds -j` already answers to this combo (Panoma's own
+// bind aside): its description, or "" if it's free.
+function bindConflict(binds, combo) {
+  var c = normalizeCombo(combo)
+  if (!c) return ""
+  var parts = c.split(" + ")
+  var key = parts[parts.length - 1].toLowerCase()
+  var mask = comboMask(c)
+  var list = Array.isArray(binds) ? binds : []
+  for (var i = 0; i < list.length; i++) {
+    var b = list[i]
+    if (!b || Number(b.modmask) !== mask || String(b.key || "").toLowerCase() !== key) continue
+    if (String(b.arg || "").indexOf("omarchy-shell panoma") !== -1 || b.description === "Panoma") continue
+    return String(b.description || b.arg || b.dispatcher || "?")
+  }
+  return ""
+}
+
+// The whole of ~/.config/hypr/panoma.lua for these settings. Only validated
+// values reach it: a normalised combo and a finger count of 3 or 4.
+function hyprConfig(cfg) {
+  var s = panomaSettings(cfg)
+  var gesture = function(direction) {
+    return 'hl.gesture({ fingers = ' + s.fingers + ', direction = "' + direction + '", action = function() ' +
+      'hl.dispatch(hl.dsp.exec_cmd("omarchy-shell panoma gesture ' + direction + '")) end })'
+  }
+  return [
+    "-- Written by Panoma from its settings (the gear in the overview). Changes made",
+    "-- here are overwritten; change them there instead. Loaded from hyprland.lua with",
+    "-- pcall(require, \"hypr.panoma\"), so removing Panoma never breaks Hyprland.",
+    "",
+    "o.bind(\"" + s.openBind + "\", \"Panoma\", \"omarchy-shell panoma toggle\")",
+    "",
+    "-- Swipe up to open, down to close. When Panoma can read the touchpad it follows",
+    "-- the fingers itself and ignores these.",
+    gesture("up"),
+    gesture("down"),
+    "",
+    "-- Panoma draws its own open/close motion; Hyprland's layer fade would ghost it.",
+    "hl.layer_rule({ match = { namespace = \"panoma\" }, no_anim = true, animation = \"none\" })",
+    ""
+  ].join("\n")
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     webAppHost: webAppHost,
@@ -423,6 +627,14 @@ if (typeof module !== "undefined") {
     workspaceFromScanCode: workspaceFromScanCode,
     withWorkspace: withWorkspace,
     parseBorderColor: parseBorderColor,
-    neighborWorkspace: neighborWorkspace
+    neighborWorkspace: neighborWorkspace,
+    SETTINGS_DEFAULTS: SETTINGS_DEFAULTS,
+    panomaSettings: panomaSettings,
+    withSetting: withSetting,
+    normalizeKey: normalizeKey,
+    normalizeCombo: normalizeCombo,
+    comboFromEvent: comboFromEvent,
+    bindConflict: bindConflict,
+    hyprConfig: hyprConfig
   }
 }
