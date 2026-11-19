@@ -168,3 +168,7 @@ omarchy-shell panoma status | jq
 
 Text follows Omarchy's language through `i18n/<code>.json`; English is the
 fallback for anything missing.
+
+## License
+
+[MIT](LICENSE) © Portalhead. Fork it, change it, ship it; keep the notice.
